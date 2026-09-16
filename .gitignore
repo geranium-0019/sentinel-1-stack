@@ -1,0 +1,19 @@
+# SAR data and processing outputs
+/data/
+/work/
+/output/
+/logs/
+
+# Python environment and generated files
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+/build/
+/dist/
+
+# Local settings
+.env
+.env.*
+!.env.example
