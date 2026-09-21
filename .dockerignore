@@ -17,3 +17,10 @@ __pycache__/
 .env
 .env.*
 !.env.example
+
+# Local logs and credentials
+*.log
+.netrc
+.netrc.*
+
+.git/

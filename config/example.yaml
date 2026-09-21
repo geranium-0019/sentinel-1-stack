@@ -1,0 +1,69 @@
+work_dir: /mnt/ssd/sar-work/sentinel-1/agung
+
+schema_version: 1
+
+# work_dir が相対パスなら、この YAML のある場所が基準。
+# paths 以下は work_dir 内の相対パス。dem は処理に使う DEM ファイル。
+paths:
+  slc: input/slc
+  orbit: input/orbit
+  aux: input/aux
+  dem: null                 # dem コマンド完了時に表示される相対パスを設定する
+  processing: processing
+  output: output
+  logs: logs
+
+# このツールで対応する処理設定をすべて列挙。未対応キー・タイプミスは prepare/run でエラー。
+# stackSentinel.py の全オプション（電離層補正・GPU等）を公開するものではない。
+processing:
+  workflow: interferogram  # 現在対応するワークフロー
+  polarization: vv
+
+  # 入力データを確認してから設定する
+  swaths: null
+  bbox: null                # [南端, 北端, 西端, 東端]
+  reference_date: null      # "YYYYMMDD"
+
+  coregistration: NESD     # NESD または geometry。自動切替はしない
+
+  # NESD / 位置合わせ用（最終干渉ペアの connections と別）
+  esd_coherence_threshold: 0.85  # 0 < 値 < 1。ESDに使う画素のコヒーレンス閾値
+  snr_misreg_threshold: 10.0     # 0以上。レンジ方向の位置ずれ推定用SNR閾値
+  num_overlap_connections: 3    # 正の整数。NESDで各日を後続何日と接続するか
+
+  # 干渉画像のマルチルック・フィルタ
+  range_looks: 9
+  azimuth_looks: 3
+  filter_strength: 0.5
+  virtual_merge: true     # SLC・幾何画像を仮想結合する（Falseなら実ファイル）
+
+  unwrap: true            # 標準はアンラップまで。falseで省略。この項目の削除でもtrue
+  remove_filter_effect: false  # -rmFilter: フィルタの影響を除いた追加のアンラップ出力
+  unwrap_method: snaphu   # snaphu または icu
+
+pairs:
+  # 日付順で各観測を後続の何観測と接続するか
+  connections: 1
+
+execution:
+  num_processes: 1        # 工程内の並列コマンド数
+  num_processes_topo: 1   # topo内部の並列数
+
+# コマンド固有の取得オプション（YAMLの処理設定ではなくCLIで指定）:
+# download: JSON, --out, --log-dir, --dry-run, --replace-invalid
+# orbit: --out, --log-dir, --dry-run, --allow-restituted
+# dem: --out, --log-dir, --margin, --fill-missing-zero, --dry-run
+# prepare: --dry-run / run: --dry-run, --resume, --unwrap-jobs（既定1）
+# アンラップの並列数はrun時の上限で調整可能。生成済みrun_filesの手編集は不要。
+#
+# NESDで「有効画素不足」になった場合:
+# - ESDのコヒーレンス分布・有効画素数を確認する。
+# - esd_coherence_threshold（例0.7）、安定した陸域を含むbbox、
+#   num_overlap_connectionsを検討する。閾値低下は精度を保証しない。
+# - 設定変更後は既存processing/とlogs/を退避してinit→prepare→run。
+#   生成済み設定へ自動反映はされない。単純な--resumeでは再開できない。
+
+# GeoTIFF出力。処理bbox内に全ペア共通のグリッドを作成
+export:
+  pixel_size_degrees: 0.0001  # 赤道付近で約11m。実際の地上分解能とは別
+  resampling: bilinear      # 位相は正弦・余弦を補間。nearも指定可

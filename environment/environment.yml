@@ -1,0 +1,34 @@
+# Human-readable dependency intent only; Docker builds use linux-64.explicit.txt.
+# The active runtime is pinned separately in Dockerfile (official Python 3.11.10).
+name: base
+
+channels:
+  - conda-forge
+
+dependencies:
+  # Python and numerical libraries
+  - python=3.11
+  - numpy=1.26.4
+  - scipy
+  - h5py
+  - matplotlib-base
+  - scikit-image
+
+  # Geospatial libraries
+  - gdal=3.10.*
+  - libgdal=3.10.*
+  - fftw
+
+  # ISCE2 build tools
+  - "cython<3"
+  - "cmake>=3.18,<4"
+  - ninja
+  - c-compiler
+  - cxx-compiler
+  - fortran-compiler
+
+  # Utilities
+  - git
+  - curl
+  - requests
+  - pyyaml

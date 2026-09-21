@@ -1,0 +1,12 @@
+# Explicit authentication mount, used only for downloads (not dry-run).
+services:
+  stack:
+    environment:
+      NETRC: /run/secrets/earthdata.netrc
+    volumes:
+      - type: bind
+        source: "${EARTHDATA_NETRC:?Set EARTHDATA_NETRC to the absolute .netrc path}"
+        target: /run/secrets/earthdata.netrc
+        read_only: true
+        bind:
+          create_host_path: false

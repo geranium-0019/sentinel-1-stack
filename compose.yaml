@@ -1,0 +1,21 @@
+services:
+  stack:
+    image: sentinel-1-stack:dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+    platform: linux/amd64
+    user: "${LOCAL_UID:?Set LOCAL_UID}:${LOCAL_GID:?Set LOCAL_GID}"
+    init: true
+    working_dir: /work
+    environment:
+      MPLCONFIGDIR: /tmp/matplotlib
+      OMP_NUM_THREADS: "${OMP_NUM_THREADS:-2}"
+      OPENBLAS_NUM_THREADS: "1"
+    volumes:
+      - type: bind
+        source: "${SENTINEL_STACK_WORK_DIR:?Use scripts/run.sh or explicitly set SENTINEL_STACK_WORK_DIR}"
+        target: /work
+        bind:
+          create_host_path: false
+    command: ["python", "--version"]
