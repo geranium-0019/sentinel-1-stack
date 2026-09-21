@@ -252,3 +252,14 @@ https://web.stanford.edu/group/radar/softwareandlinks/sw/snaphu/
 - ローカルログ: `build/ci-local/`（Git管理外）。
 - Git remote未設定のため、GitHub上の実行・artifact保存は未確認。設定実装とローカル検証のみ完了。
 - ソースのcommit/push、レジストリ公開は行っていない。
+
+## 2026-09-21 配布候補 rc1：最終検査不合格
+
+ソースcommit `59f3531a30ab97bc828880707584d682f0bebb4c` から作成。
+初回候補は検査成功したが、配布用メタデータを整えた最終候補は
+XML100回・全体テスト9回成功後、suite-09で終了139。
+`test_missing_orbit_does_not_download_any_eof` 実行中、argparseから呼ばれた
+`shutil.get_terminal_size` 内でSegmentation fault。原因は未確定。
+過去の合格結果をもって今回を合格にはしない。保存・load・initは成功。
+最終ID: `sha256:e3ad061f5936cb9aa28a03889eb78d3fd92a457518717596ebb3e50648c5fe04`。配布・実データ検証用としての採用は保留。
+全ログ・manifest・checksumは `dist/0.1.0-rc1/` に保存。
