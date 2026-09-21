@@ -69,6 +69,12 @@ class PrepareTests(unittest.TestCase):
             'execution': {'num_processes': 4, 'num_processes_topo': 2},
             'pairs': {'connections': 1}}
 
+    def test_automatic_swaths_accepts_null_or_omission(self):
+        self.document['processing']['swaths'] = None
+        self.assertIsNone(parameters(self.document)[0].get('swaths'))
+        del self.document['processing']['swaths']
+        self.assertIsNone(parameters(self.document)[0].get('swaths'))
+
     def test_explicit_processing_parameters(self):
         p, e, connections = parameters(self.document)
         self.assertEqual((p['swaths'], e['num_processes'], connections), ([3], 4, 1))
@@ -94,7 +100,7 @@ class PrepareTests(unittest.TestCase):
                 parameters(doc)
 
     def test_rejects_ambiguous_or_invalid_parameters(self):
-        cases = [('swaths', None), ('swaths', [True]), ('swaths', [3, 3]),
+        cases = [('swaths', []), ('swaths', [True]), ('swaths', [3, 3]),
                  ('bbox', [1, 0, 2, 3]), ('bbox', [float('nan'), 1, 2, 3]),
                  ('reference_date', 20260729), ('reference_date', '20260230'),
                  ('range_looks', True), ('azimuth_looks', 0),

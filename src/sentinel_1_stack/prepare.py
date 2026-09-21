@@ -13,7 +13,7 @@ import sys
 
 import yaml
 
-from . import config, orbit
+from . import config, orbit, swaths as swath_selection
 from .workspace import WorkspaceError, require_initialized
 
 
@@ -73,9 +73,9 @@ def parameters(document):
     if type(p.get('unwrap', True)) is not bool:
         raise WorkspaceError('processing.unwrap は true / false で指定してください。')
     swaths = p.get('swaths')
-    if (not isinstance(swaths, list) or not swaths or
+    if swaths is not None and (not isinstance(swaths, list) or not swaths or
             any(type(x) is not int or x not in (1, 2, 3) for x in swaths) or len(set(swaths)) != len(swaths)):
-        raise WorkspaceError('processing.swaths を例: [3] のように明示してください。')
+        raise WorkspaceError('processing.swaths は null（自動）または [3] のようなリストにしてください。')
     bbox = p.get('bbox')
     if (not isinstance(bbox, list) or len(bbox) != 4 or
             any(type(x) not in (float, int) or not math.isfinite(x) for x in bbox) or
@@ -135,6 +135,10 @@ def plan(config_path):
         safe_path(f, root)
         orbit.validate_eof(f, o, [scene])
         selected.append({'scene': scene.name, 'path': str(f), 'kind': o.kind})
+    selection = {'mode': 'explicit'}
+    if p.get('swaths') is None:
+        p['swaths'], evidence = swath_selection.select(inputs, p['bbox'], p['polarization'])
+        selection = {'mode': 'auto', 'observations': evidence}
     executable = shutil.which('stackSentinel.py')
     if executable is None:
         raise WorkspaceError('stackSentinel.py がありません。ISCE2 コンテナで実行してください。')
@@ -149,7 +153,7 @@ def plan(config_path):
                '--num_proc4topo', str(e['num_processes_topo'])] + extra_arguments(p)
     return {'destination': str(destination), 'command': command, 'inputs': inputs, 'orbits': selected,
             'dates': dates, 'pairs': [[a, b] for i, a in enumerate(dates) for b in dates[i+1:i+1+connections]],
-            'processing': p, 'execution': e, 'config_sha256': hashlib.sha256(config_path.read_bytes()).hexdigest()}
+            'swath_selection': selection, 'processing': p, 'execution': e, 'config_sha256': hashlib.sha256(config_path.read_bytes()).hexdigest()}
 
 
 def check_dem(path, bbox):
@@ -192,6 +196,8 @@ def run(args):
         record_path = log_directory / 'prepare.json'
         record['log'] = str(log_path)
         record['record'] = str(record_path)
+        if record.get('swath_selection', {}).get('mode') == 'auto':
+            print(f"swath自動選択（bboxと全観測の位置情報）: {record['processing']['swaths']}")
         print('観測日: ' + ', '.join(record['dates']))
         print(f"干渉ペア: {len(record['pairs'])} / swaths: {record['processing']['swaths']}")
         for item in record['orbits']:
