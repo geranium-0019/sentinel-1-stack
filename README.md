@@ -1,29 +1,26 @@
 # sentinel-1-stack
 
-Sentinel-1 IW SLCをISCE2で処理するDocker環境と操作ツールです。
+Sentinel-1 IW SLCを[ISCE2](https://github.com/isce-framework/isce2)で処理するDocker環境と操作ツールです。
 データ取得から干渉解析・アンラップ・GeoTIFF出力まで実行できます。
+
+## このプロジェクトの目的
+
+ISCE2を使った解析では、ディレクトリ構成の間違いや依存ライブラリの衝突など、解析そのもの以外の準備でエラーが起こることがあります。
+このプロジェクトは、Dockerによる実行環境の統一と作業ディレクトリの自動作成によって、こうしたエラーを減らすことを目指しています。
+
+また、処理中に何が行われているかを理解しながら解析を進められることを重視しています。
+各工程の実行内容やログを確認できるようにし、よくあるエラーへの対処方法やパラメータの決め方をマニュアルに整備していきます。
 
 ## 始め方
 
 Linux x86_64、Docker、Bash、ホスト側のPython 3.9以上が必要です。
 WindowsではWSL2とDocker Desktopを使います。
 
-好きな場所でソースを取得します。
+**[イメージのダウンロード・導入手順](docs/distribution.md)** に沿って、
+GitHub ReleasesからDockerイメージと操作用ファイルを取得してください。手元でのビルドは不要です。
 
-```bash
-git clone git@github.com:geranium-0019/sentinel-1-stack.git
-cd sentinel-1-stack
-```
-
-GitHubへのSSH接続設定が必要です。Dockerイメージはレジストリ未公開です。
-配布されたイメージがない場合は、ここでビルドします。
-
-```bash
-docker build --platform linux/amd64 -t sentinel-1-stack:dev .
-```
-
-次に **[操作マニュアル](docs/操作マニュアル.md)** に沿って進めてください。
-上のコマンドでビルドした場合、マニュアルの `IMAGE` は `sentinel-1-stack:dev` にします。
+読み込み後は **[操作マニュアル](docs/操作マニュアル.md)** に沿って進めます。
+自分でビルドする場合の手順は [詳細リファレンス](docs/reference.md#環境) にあります。
 
 ## 処理の流れ
 
@@ -37,7 +34,7 @@ docker build --platform linux/amd64 -t sentinel-1-stack:dev .
 
 - [操作マニュアル](docs/操作マニュアル.md)：最初から順に実行する手順
 - [詳細リファレンス](docs/reference.md)：認証・オプション・エラー対応・テスト
-- [配布イメージの使用手順](docs/releases/0.1.0-rc1.md)：イメージファイルの読み込み方
+- [配布イメージの使用手順](docs/distribution.md)：ダウンロードと読み込み方
 
 現在は個人利用で検証中です。実データの処理実績はありますが、反復テストでの異常終了が未解決です。
 詳細は [調査記録](environment/diagnosis-20260921/REPORT.md) を参照してください。

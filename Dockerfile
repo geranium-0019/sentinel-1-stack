@@ -52,6 +52,8 @@ RUN cmake \
     && mkdir -p /opt/conda/share/isce2 \
     && cp -a /opt/conda/src/isce2/contrib/stack \
         /opt/conda/share/isce2/stack \
+    && cp /opt/conda/src/isce2/LICENSE /opt/conda/src/isce2/LICENSE-2.0.* \
+        /opt/conda/share/isce2/ \
     && printf '%s\n' "${ISCE2_COMMIT}" \
         > /opt/conda/share/isce2/source-commit.txt \
     && rm -rf /opt/conda/src/isce2
