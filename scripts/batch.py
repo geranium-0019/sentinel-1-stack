@@ -84,6 +84,8 @@ def acquire(args, info, root, log, run_id):
     if any(processing.iterdir()):
         raise WorkspaceError('processingが空ではありません。生成済みの一括実行用YAMLで --resume するか、既存処理を退避してください。')
     download = base + ['download', original]
+    if args.download_jobs != 1:
+        download += ['--jobs', str(args.download_jobs)]
     if args.json:
         download += ['--json', str(args.json.expanduser().absolute())]
     execute(download, log)
@@ -131,15 +133,18 @@ def acquire(args, info, root, log, run_id):
 def main(argv=None):
     parser = argparse.ArgumentParser(description='設定YAMLからSLC・軌道・DEM取得とISCE2処理を一括実行する補助ツール')
     parser.add_argument('config', type=Path)
-    parser.add_argument('--image', default='sentinel-1-stack:0.1.0-rc2')
+    parser.add_argument('--image', default='sentinel-1-stack:0.1.0-rc3')
     parser.add_argument('--image-archive', type=Path, help='docker loadする配布tar/tar.gz。省略時は読込済みイメージを使用')
     parser.add_argument('--json', type=Path, help='ASF JSONを指定（省略時は設定YAMLと同じ場所から自動選択）')
     parser.add_argument('--allow-restituted', action='store_true')
     parser.add_argument('--fill-missing-zero', action='store_true')
     parser.add_argument('--resume', action='store_true', help='prepareを省略し、既存処理をrun --resumeで再開')
+    parser.add_argument('--download-jobs', type=int, default=1, help='SLCの同時取得数（既定1）')
     parser.add_argument('--unwrap-jobs', type=int, default=1)
     parser.add_argument('--plan', action='store_true', help='実行順だけを表示。Docker起動・イメージ読込・ファイル変更なし')
     args = parser.parse_args(argv)
+    if args.download_jobs < 1:
+        parser.error('--download-jobs は1以上で指定してください。')
     if args.unwrap_jobs < 1:
         parser.error('--unwrap-jobs は1以上で指定してください。')
     log = None

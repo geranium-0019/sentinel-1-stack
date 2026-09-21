@@ -86,6 +86,16 @@ class LauncherTests(unittest.TestCase):
         self.assertNotIn("NETRC=/run/secrets/earthdata.netrc", command)
         self.assertEqual(set(self.root.rglob("*")), before)
 
+    def test_download_jobs_forwarded_and_invalid_value_rejected(self):
+        self.initialize()
+        self.assertEqual(self.launch('download', str(self.config), '--jobs', '2', '--dry-run'), 0)
+        command = self.calls[-1]
+        self.assertEqual(command[command.index('--jobs') + 1], '2')
+        before = len(self.calls)
+        with self.assertRaises(SystemExit):
+            self.launch('download', str(self.config), '--jobs', '0')
+        self.assertEqual(len(self.calls), before)
+
     def test_auto_json_uses_config_directory_without_writes(self):
         self.initialize()
         before = set(self.root.rglob("*"))

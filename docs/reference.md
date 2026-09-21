@@ -80,6 +80,13 @@ Compose直接起動で `not a shared mount` が出る環境の手順は、既存
 
 ## SLC のダウンロード
 
+rc3以降は `download CONFIG --jobs 2` で2ファイルを並列取得できます。既定は1です。
+一括実行では `batch.sh CONFIG --download-jobs 2` を使います。旧rc2イメージにはこの機能は含まれません。
+ファイルごとに独立した認証セッションを使い、サイズ・MD5検証後に正式名にします。
+失敗したら新しい取得を止め、実行中の通信終了を待って記録を確定します。
+実行記録には並列数と製品ごとの downloaded / skipped / recovered / failed / cancelled / pending 等を保存します。
+
+
 最新版のホスト起動スクリプトでは `scripts/run.sh download CONFIG` とJSONを省略できます。
 設定YAMLと同じ場所の `.json`／`.geojson` が1件なら自動選択し、0件・複数件では停止します。
 明示指定は `scripts/run.sh download CONFIG --json JSON`。従来の位置引数 `download CONFIG JSON` も使えます。

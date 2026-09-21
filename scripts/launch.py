@@ -63,6 +63,7 @@ def main(argv=None):
     download.add_argument("-out", "--out", type=Path)
     download.add_argument("--log-dir", type=Path)
     download.add_argument("--dry-run", action="store_true")
+    download.add_argument("--jobs", type=int, default=1, help="同時取得数（既定1）")
     download.add_argument("--replace-invalid", action="store_true")
     orbit = commands.add_parser("orbit", help="取得済み SLC に対応する ASF 軌道を取得")
     orbit.add_argument("config", type=Path)
@@ -93,6 +94,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.command == "run" and args.unwrap_jobs < 1:
         parser.error("--unwrap-jobs は1以上の整数で指定してください。")
+    if args.command in ("download", "download-slc") and args.jobs < 1:
+        parser.error("--jobs は1以上の整数で指定してください。")
     try:
         config = file_path(args.config)
         request = None
@@ -162,6 +165,8 @@ def main(argv=None):
         if "RES_OPTIONS" in os.environ:
             command += ["--env", "RES_OPTIONS"]
         options = []
+        if is_download and args.jobs != 1:
+            options += ["--jobs", str(args.jobs)]
         output_default = root / "input/dem" if is_dem else root / settings["paths"]["orbit" if is_orbit else "slc"]
         log_subdir = "dem" if is_dem else "orbits" if is_orbit else "downloads"
         for key, default in (("out", output_default),

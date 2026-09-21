@@ -81,9 +81,10 @@ class BatchTests(unittest.TestCase):
         self.settings['paths']['dem'] = 'input/dem/custom.dem'
         self.document['processing']['unwrap'] = False
         self.info['unwrap'] = False
-        self.assertEqual(self.run_batch('--json', str(self.root/'chosen.geojson'), '--allow-restituted'), 0)
+        self.assertEqual(self.run_batch('--json', str(self.root/'chosen.geojson'), '--allow-restituted', '--download-jobs', '2'), 0)
         self.assertNotIn('dem', [c[3] for c in self.calls])
         self.assertIn('--json', self.calls[1])
+        self.assertEqual(self.calls[1][self.calls[1].index('--jobs')+1], '2')
         self.assertIn('--allow-restituted', self.calls[2])
         self.assertNotIn('--include-unwrapped', self.calls[-1])
 

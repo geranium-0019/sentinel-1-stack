@@ -6,6 +6,7 @@ Adapted from sar-tools/download-sentinel-1; that standalone tool is unchanged.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from contextlib import ExitStack, contextmanager, redirect_stdout, redirect_stderr
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -18,6 +19,7 @@ import shutil
 import socket
 import sys
 import time
+import threading
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -32,6 +34,10 @@ SLC_NAME = re.compile(
 
 class InputError(ValueError):
     """Invalid arguments or input metadata."""
+
+
+class DownloadCancelled(RuntimeError):
+    """A peer failed or the user interrupted this batch."""
 
 
 class DownloadError(RuntimeError):
@@ -210,12 +216,13 @@ def is_dns_error(error: BaseException) -> bool:
     return False
 
 
-def request_product(session, product, *, allow_redirects=True):
+def request_product(session, product, *, allow_redirects=True, stop=None):
     """Retry DNS failures before consuming any product bytes, including redirects."""
     from requests.exceptions import RequestException
 
     delays = (1, 2, 4)
     for attempt in range(len(delays) + 1):
+        check_cancelled(stop)
         try:
             return session.get(product.url, stream=True, timeout=(30, 120),
                                allow_redirects=allow_redirects)
@@ -224,19 +231,28 @@ def request_product(session, product, *, allow_redirects=True):
                 raise
             # Exception strings may contain signed redirect URLs. Never log them.
             delay = delays[attempt]
-            print(f"  DNS 再試行 {attempt + 1}/{len(delays)}: "
+            print(f"[{getattr(product, 'filename', 'ASF問い合わせ')}] DNS 再試行 {attempt + 1}/{len(delays)}: "
                   f"名前解決に失敗したため {delay} 秒後に再接続します。", flush=True)
-            time.sleep(delay)
+            if stop is None:
+                time.sleep(delay)
+            elif stop.wait(delay):
+                check_cancelled(stop)
 
 
-def fetch_product(product: Product, output_dir: Path, session, *, replace_invalid=False) -> str:
+def check_cancelled(stop):
+    if stop is not None and stop.is_set():
+        raise DownloadCancelled("他の取得失敗または中断により停止しました。")
+
+
+def fetch_product(product: Product, output_dir: Path, session, *, replace_invalid=False, stop=None) -> str:
     from requests.exceptions import RequestException
 
+    check_cancelled(stop)
     destination = output_dir / product.filename
     partial = output_dir / f"{product.filename}.part"
     check_file_slot(partial)
     if verified_file(destination, product):
-        print("  サイズ・MD5 一致: 取得済みのためスキップ", flush=True)
+        print(f"[{product.filename}] サイズ・MD5 一致: 取得済みのためスキップ", flush=True)
         return "skipped"
     if destination.exists():
         if not replace_invalid:
@@ -244,17 +260,17 @@ def fetch_product(product: Product, output_dir: Path, session, *, replace_invali
                 f"既存 ZIP のサイズまたは MD5 が不一致です: {product.filename}。"
                 "置き換える場合は --replace-invalid を指定してください。"
             )
-        print("  既存 ZIP が不一致: 新しいファイルの検証成功後に置き換えます。", flush=True)
+        print(f"[{product.filename}] 既存 ZIP が不一致: 新しいファイルの検証成功後に置き換えます。", flush=True)
     if verified_file(partial, product):
         os.replace(partial, destination)
-        print("  検証済みの一時ファイルを正式名に変更", flush=True)
+        print(f"[{product.filename}] 検証済みの一時ファイルを正式名に変更", flush=True)
         return "recovered"
 
     # An invalid partial will be truncated; an existing final file is preserved
     # until its replacement has passed verification.
     reusable = partial.stat().st_size if partial.exists() else 0
     if reusable:
-        print("  未完成の .part は先頭から再取得します。", flush=True)
+        print(f"[{product.filename}] 未完成の .part は先頭から再取得します。", flush=True)
     if shutil.disk_usage(output_dir).free + reusable < product.size:
         raise DownloadError(f"保存先の空き容量が不足しています: {product.filename}")
 
@@ -262,13 +278,14 @@ def fetch_product(product: Product, output_dir: Path, session, *, replace_invali
     checksum = hashlib.md5(usedforsecurity=False)
     last_report = time.monotonic()
     try:
-        with request_product(session, product) as response:
+        with request_product(session, product, stop=stop) as response:
             if response.status_code in {401, 403}:
                 raise DownloadError("Earthdata 認証に失敗しました。~/.netrc の設定とデータへのアクセス権を確認してください。")
             if response.status_code != 200:
                 raise DownloadError(f"HTTP {response.status_code}: {product.filename} の取得に失敗しました。")
             with partial.open("wb") as stream:
                 for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
+                    check_cancelled(stop)
                     if not chunk:
                         continue
                     written += len(chunk)
@@ -278,7 +295,7 @@ def fetch_product(product: Product, output_dir: Path, session, *, replace_invali
                     checksum.update(chunk)
                     now = time.monotonic()
                     if now - last_report >= 5:
-                        print(f"  {written / product.size:.1%} ({written:,} / {product.size:,} bytes)", flush=True)
+                        print(f"[{product.filename}] {written / product.size:.1%} ({written:,} / {product.size:,} bytes)", flush=True)
                         last_report = now
                 stream.flush()
                 os.fsync(stream.fileno())
@@ -290,13 +307,77 @@ def fetch_product(product: Product, output_dir: Path, session, *, replace_invali
             ) from exc
         raise DownloadError(f"通信に失敗しました ({type(exc).__name__}): {product.filename}。再実行できます。") from exc
 
+    check_cancelled(stop)
     if written != product.size:
         raise DownloadError(f"サイズ不一致: {product.filename}（予定 {product.size:,} / 取得 {written:,} bytes）")
     if checksum.hexdigest() != product.md5:
         raise DownloadError(f"MD5 不一致: {product.filename}")
     os.replace(partial, destination)
-    print("  100% — サイズ・MD5 検証成功", flush=True)
+    print(f"[{product.filename}] 100% — サイズ・MD5 検証成功", flush=True)
     return "downloaded"
+
+
+def fetch_parallel(products, output_dir, jobs, replace_invalid, manifest, manifest_path):
+    """Each worker owns its session; only the coordinator updates the manifest."""
+    stop = threading.Event()
+    counts = {"downloaded": 0, "skipped": 0, "recovered": 0}
+    pending = {}
+    next_index = 0
+    failure = None
+    pool = ThreadPoolExecutor(max_workers=min(jobs, len(products)))
+
+    def worker(product):
+        check_cancelled(stop)
+        try:
+            with create_session() as session:
+                return fetch_product(product, output_dir, session,
+                                     replace_invalid=replace_invalid, stop=stop)
+        except BaseException:
+            stop.set()
+            raise
+
+    def collect(future, index):
+        nonlocal failure
+        try:
+            result = future.result()
+            manifest["products"][index]["status"] = result
+            counts[result] += 1
+        except DownloadCancelled:
+            manifest["products"][index]["status"] = "cancelled"
+        except BaseException as exc:
+            manifest["products"][index]["status"] = "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed"
+            stop.set()
+            if failure is None:
+                failure = exc
+
+    try:
+        while next_index < len(products) or pending:
+            while not stop.is_set() and next_index < len(products) and len(pending) < jobs:
+                index = next_index
+                next_index += 1
+                print(f"[{index + 1}/{len(products)}] {products[index].filename}", flush=True)
+                manifest["products"][index]["status"] = "checking_or_downloading"
+                write_manifest(manifest_path, manifest)
+                pending[pool.submit(worker, products[index])] = index
+            if not pending:
+                break
+            done, _ = wait(pending, return_when=FIRST_COMPLETED)
+            for future in done:
+                collect(future, pending.pop(future))
+            write_manifest(manifest_path, manifest)
+    except BaseException as exc:
+        failure = exc
+        stop.set()
+    finally:
+        # Keep locks and logs open until every active writer has stopped.
+        stop.set()
+        pool.shutdown(wait=True)
+        for future, index in pending.items():
+            collect(future, index)
+        write_manifest(manifest_path, manifest)
+    if failure is not None:
+        raise failure
+    return counts
 
 
 def ensure_input_unchanged(batch: Batch) -> None:
@@ -307,18 +388,21 @@ def ensure_input_unchanged(batch: Batch) -> None:
 class Tee:
     """Write progress to the terminal and the per-run UTF-8 log."""
 
-    def __init__(self, terminal, log):
+    def __init__(self, terminal, log, lock=None):
         self.terminal, self.log = terminal, log
+        self.lock = lock or threading.RLock()
 
     def write(self, text):
-        self.terminal.write(text)
-        self.log.write(text)
-        self.log.flush()
+        with self.lock:
+            self.terminal.write(text)
+            self.log.write(text)
+            self.log.flush()
         return len(text)
 
     def flush(self):
-        self.terminal.flush()
-        self.log.flush()
+        with self.lock:
+            self.terminal.flush()
+            self.log.flush()
 
 
 @contextmanager
@@ -334,6 +418,7 @@ def input_lock(path: Path):
 
 
 def add_arguments(parser):
+    parser.add_argument("--jobs", type=int, default=1, help="同時に取得するファイル数（既定1、まず2を推奨）")
     parser.add_argument("config", type=Path, help="work_dir を指定した設定 YAML")
     parser.add_argument("json", type=Path, help="ASF GeoJSON ファイルを1個指定")
     parser.add_argument("-out", "--out", type=Path,
@@ -362,6 +447,9 @@ def run(args) -> int:
     manifest = None
     manifest_path = None
     try:
+        jobs = getattr(args, "jobs", 1)
+        if type(jobs) is not int or jobs < 1:
+            raise InputError("--jobs は1以上の整数で指定してください。")
         input_path = args.json.expanduser().absolute()
         batch = load_batch(input_path)
         from . import config
@@ -377,6 +465,7 @@ def run(args) -> int:
             check_file_slot(output_dir / (product.filename + ".part"))
         if args.dry_run:
             print_plan(batch, output_dir)
+            print(f"最大同時取得数: {jobs}")
             print("入力 JSON は元の場所に残します。")
             print(f"ログ保存先: {log_dir}")
             print("DRY RUN: 通信・ファイル変更は行いません。既存 ZIP の MD5 検証は実行時に行います。")
@@ -390,11 +479,12 @@ def run(args) -> int:
         run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + "_" + uuid4().hex[:8]
         log_path = log_dir / f"slc_{run_id}.log"
         log = contexts.enter_context(log_path.open("x", encoding="utf-8"))
-        contexts.enter_context(redirect_stdout(Tee(sys.stdout, log)))
-        contexts.enter_context(redirect_stderr(Tee(sys.stderr, log)))
+        log_lock = threading.RLock()
+        contexts.enter_context(redirect_stdout(Tee(sys.stdout, log, log_lock)))
+        contexts.enter_context(redirect_stderr(Tee(sys.stderr, log, log_lock)))
         manifest_path = log_dir / f"slc_{run_id}.json"
         manifest = {
-            "schema_version": 1, "status": "running", "input": str(batch.path),
+            "schema_version": 1, "status": "running", "jobs": jobs, "input": str(batch.path),
             "input_sha256": hashlib.sha256(batch.content).hexdigest(),
             "output": str(output_dir), "work_dir": str(work_dir),
             "started_at": datetime.now(timezone.utc).isoformat(),
@@ -410,15 +500,23 @@ def run(args) -> int:
         print(f"ログ: {log_path}")
         print(f"実行記録: {manifest_path}")
         counts = {"downloaded": 0, "skipped": 0, "recovered": 0}
-        session = contexts.enter_context(create_session())
-        for i, product in enumerate(batch.products):
-            print(f"[{i + 1}/{len(batch.products)}] {product.filename}", flush=True)
-            manifest["products"][i]["status"] = "checking_or_downloading"
-            write_manifest(manifest_path, manifest)
-            result = fetch_product(product, output_dir, session, replace_invalid=args.replace_invalid)
-            counts[result] += 1
-            manifest["products"][i]["status"] = result
-            write_manifest(manifest_path, manifest)
+        print(f"最大同時取得数: {jobs}", flush=True)
+        if jobs == 1:
+            session = contexts.enter_context(create_session())
+            for i, product in enumerate(batch.products):
+                print(f"[{i + 1}/{len(batch.products)}] {product.filename}", flush=True)
+                manifest["products"][i]["status"] = "checking_or_downloading"
+                write_manifest(manifest_path, manifest)
+                try:
+                    result = fetch_product(product, output_dir, session, replace_invalid=args.replace_invalid)
+                except (DownloadError, OSError, KeyboardInterrupt) as exc:
+                    manifest["products"][i]["status"] = "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed"
+                    raise
+                counts[result] += 1
+                manifest["products"][i]["status"] = result
+                write_manifest(manifest_path, manifest)
+        else:
+            counts = fetch_parallel(batch.products, output_dir, jobs, args.replace_invalid, manifest, manifest_path)
         ensure_input_unchanged(batch)
         manifest["status"] = "complete"
         manifest["finished_at"] = datetime.now(timezone.utc).isoformat()
