@@ -251,7 +251,6 @@ def run(args):
         record['skipped_run_files'] = [str(f) for f in files if not unwrap and f.name.endswith('_unwrap')]
         record['status'] = 'prepared'
         print(f'生成完了: {len(files)} 工程（実行対象: {len(record["run_files"])} 工程）')
-        print('実処理・ジオコード・PGV は未実行です。')
         return 0
     except KeyboardInterrupt:
         if record:
