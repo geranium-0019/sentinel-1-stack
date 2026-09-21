@@ -1,21 +1,49 @@
 # Dockerイメージのダウンロードと導入
 
 対象はLinux x86_64（linux/amd64）。WindowsではWSL2＋Docker Desktopを使います。
-Docker、Bash、Python 3.9以上を事前に用意し、Dockerを起動してください。
+Docker、Bash、curl、Python 3.9以上を事前に用意し、Dockerを起動してください。
 以下の操作はLinuxまたはWSLのターミナルで行います。
 
 ## 1. 配布ファイルを取得する
 
-[GitHub Releases](https://github.com/geranium-0019/sentinel-1-stack/releases) から
-`v0.1.0-rc2` を開き、Assetsの以下3ファイルを同じフォルダに保存します。
-リリースがまだ表示されない場合は、[配布ビルド](https://github.com/geranium-0019/sentinel-1-stack/actions/workflows/release.yaml) が完了したか確認してください。
+ターミナルから3ファイルをダウンロードします。GitHubアカウントやGitのSSH設定は不要です。
+
+まず保存先を決めます。**下記の `$HOME/sentinel-1-stack` は例です。フォルダ名・配置場所は自由に変更してください。**
+`$HOME` はLinux／WSLのホームディレクトリを表します。
+別の場所で導入を試す場合は、例えば `$HOME/sentinel-1-stack-test` に変更できます。
+
+ここは配布ファイルと操作用ツールを置く場所です。
+**SLCや解析結果を保存する作業ディレクトリは、導入後に操作マニュアルで別途決めます。**
+
+```bash
+# 保存先の例：必要に応じて、この行を変更してください
+INSTALL_DIR="$HOME/sentinel-1-stack"
+
+mkdir -p "$INSTALL_DIR"
+cd "$INSTALL_DIR"
+```
+
+`mkdir -p` は保存先フォルダを作成し、`cd` はそのフォルダへ移動します。
+続いて、同じターミナルでダウンロードします（イメージは約1.04GB）。
+
+```bash
+BASE_URL="https://github.com/geranium-0019/sentinel-1-stack/releases/download/v0.1.0-rc2"
+
+curl -fLO "$BASE_URL/sentinel-1-stack-0.1.0-rc2-linux-amd64.tar.gz"
+curl -fLO "$BASE_URL/sentinel-1-stack-0.1.0-rc2-source.tar.gz"
+curl -fLO "$BASE_URL/SHA256SUMS"
+```
+
+取得するファイルは以下の3つです。エラーが出た場合は、取得を完了してから次へ進んでください。
 
 - `sentinel-1-stack-0.1.0-rc2-linux-amd64.tar.gz`：Dockerイメージ
 - `sentinel-1-stack-0.1.0-rc2-source.tar.gz`：起動スクリプト・設定例・マニュアル
 - `SHA256SUMS`：ファイル破損を確認するためのチェックサム
 
+ブラウザを使う場合は、[rc2の配布ページ](https://github.com/geranium-0019/sentinel-1-stack/releases/tag/v0.1.0-rc2)
+のAssetsから同じ3ファイルを同じフォルダへ保存しても構いません。
 GitHubが自動表示する「Source code」ではなく、上記の名前のファイルを選びます。
-GitHubアカウントやGitのSSH設定はダウンロードに不要です。
+
 イメージには解析ソフトウェアが含まれます。SLC・DEMなどの観測データや認証情報は含みません。
 圧縮ファイルの保存に加えて、Docker側にも展開後のイメージ用容量が必要です。
 
@@ -25,13 +53,18 @@ GitHubアカウントやGitのSSH設定はダウンロードに不要です。
 
 ```bash
 sha256sum --ignore-missing -c SHA256SUMS
+```
+
+**イメージと操作用ファイルの両方について `OK` が表示されたことを確認してから、次のコマンドへ進めてください。**
+`--ignore-missing` は、任意の検査ログなどをダウンロードしていない場合に使います。
+
+```bash
 docker load -i sentinel-1-stack-0.1.0-rc2-linux-amd64.tar.gz
 tar -xzf sentinel-1-stack-0.1.0-rc2-source.tar.gz
 cd sentinel-1-stack-0.1.0-rc2
 ```
 
-**イメージと操作用ファイルの両方について `OK` が表示されたことを確認してから、次のコマンドへ進めてください。**
-`--ignore-missing` は、任意の検査ログなどをダウンロードしていない場合に使います。
+読み込みと展開が終わったら確認します。
 
 ```bash
 docker image inspect sentinel-1-stack:0.1.0-rc2 --format '{{.Id}}'
