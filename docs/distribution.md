@@ -27,20 +27,20 @@ cd "$INSTALL_DIR"
 続いて、同じターミナルでダウンロードします（イメージは約1GB）。
 
 ```bash
-BASE_URL="https://github.com/geranium-0019/sentinel-1-stack/releases/download/v0.1.0-rc3"
+BASE_URL="https://github.com/geranium-0019/sentinel-1-stack/releases/download/v0.1.0-rc4"
 
-curl -fLO "$BASE_URL/sentinel-1-stack-0.1.0-rc3-linux-amd64.tar.gz"
-curl -fLO "$BASE_URL/sentinel-1-stack-0.1.0-rc3-source.tar.gz"
+curl -fLO "$BASE_URL/sentinel-1-stack-0.1.0-rc4-linux-amd64.tar.gz"
+curl -fLO "$BASE_URL/sentinel-1-stack-0.1.0-rc4-source.tar.gz"
 curl -fLO "$BASE_URL/SHA256SUMS"
 ```
 
 取得するファイルは以下の3つです。エラーが出た場合は、取得を完了してから次へ進んでください。
 
-- `sentinel-1-stack-0.1.0-rc3-linux-amd64.tar.gz`：Dockerイメージ
-- `sentinel-1-stack-0.1.0-rc3-source.tar.gz`：起動スクリプト・設定例・マニュアル
+- `sentinel-1-stack-0.1.0-rc4-linux-amd64.tar.gz`：Dockerイメージ
+- `sentinel-1-stack-0.1.0-rc4-source.tar.gz`：起動スクリプト・設定例・マニュアル
 - `SHA256SUMS`：ファイル破損を確認するためのチェックサム
 
-ブラウザを使う場合は、[rc3の配布ページ](https://github.com/geranium-0019/sentinel-1-stack/releases/tag/v0.1.0-rc3)
+ブラウザを使う場合は、[rc4の配布ページ](https://github.com/geranium-0019/sentinel-1-stack/releases/tag/v0.1.0-rc4)
 のAssetsから同じ3ファイルを同じフォルダへ保存しても構いません。
 GitHubが自動表示する「Source code」ではなく、上記の名前のファイルを選びます。
 
@@ -59,20 +59,20 @@ sha256sum --ignore-missing -c SHA256SUMS
 `--ignore-missing` は、任意の検査ログなどをダウンロードしていない場合に使います。
 
 ```bash
-docker load -i sentinel-1-stack-0.1.0-rc3-linux-amd64.tar.gz
-tar -xzf sentinel-1-stack-0.1.0-rc3-source.tar.gz
-cd sentinel-1-stack-0.1.0-rc3
+docker load -i sentinel-1-stack-0.1.0-rc4-linux-amd64.tar.gz
+tar -xzf sentinel-1-stack-0.1.0-rc4-source.tar.gz
+cd sentinel-1-stack-0.1.0-rc4
 ```
 
 読み込みと展開が終わったら確認します。
 
 ```bash
-docker image inspect sentinel-1-stack:0.1.0-rc3 --format '{{.Id}}'
-docker run --rm sentinel-1-stack:0.1.0-rc3 python --version
+docker image inspect sentinel-1-stack:0.1.0-rc4 --format '{{.Id}}'
+docker run --rm sentinel-1-stack:0.1.0-rc4 python --version
 ls scripts/run.sh config/example.yaml
 
 TOOL_DIR="$(pwd -P)"
-IMAGE="sentinel-1-stack:0.1.0-rc3"
+IMAGE="sentinel-1-stack:0.1.0-rc4"
 ```
 
 イメージID・Pythonのバージョン・2つのファイルが表示されれば導入完了です。
@@ -86,18 +86,18 @@ IMAGE="sentinel-1-stack:0.1.0-rc3"
 
 ASFの検索結果JSONとEarthdata認証は、ご自身で用意してください。
 作業ディレクトリには外部ディスクの `/mnt/…` も指定できます。
-イメージと操作用ファイルは同じバージョンのものを使ってください。並列取得（`--jobs`）はrc3以降に対応しています。
+イメージと操作用ファイルは同じバージョンのものを使ってください。並列取得はrc3以降、自動再試行・途中再開はrc4以降に対応しています。
 
 ## 検証範囲
 
-rc3は検証用の候補です。GitHub上でビルドした同じイメージに対して、依存関係、
+rc4は検証用の候補です。GitHub上でビルドした同じイメージに対して、依存関係、
 ISCE2・GDAL等の読み込み、合成データのアンラップ、中断・再開、XML反復100回、
 全単体テスト10回を確認し、成功した場合だけ配布ファイルを作成します。
 `validation.tar.gz` と `image-inspect.json` で結果・イメージID・ソースcommitを確認できます。
 
 過去のrc1では現在のWSL環境で反復検査中の異常終了があり、原因は未確定です。
 GitHub上での成功は、その原因の解消や全PC・全観測データでの動作を保証するものではありません。
-rc3そのものでの実データの通し検証は今後行います。
+rc4そのものでの実データの通し検証は今後行います。
 
 ## 開発者向け：次の配布を作る
 

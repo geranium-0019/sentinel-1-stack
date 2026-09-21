@@ -88,9 +88,10 @@ class LauncherTests(unittest.TestCase):
 
     def test_download_jobs_forwarded_and_invalid_value_rejected(self):
         self.initialize()
-        self.assertEqual(self.launch('download', str(self.config), '--jobs', '2', '--dry-run'), 0)
+        self.assertEqual(self.launch('download', str(self.config), '--jobs', '2', '--retries', '5', '--dry-run'), 0)
         command = self.calls[-1]
         self.assertEqual(command[command.index('--jobs') + 1], '2')
+        self.assertEqual(command[command.index('--retries') + 1], '5')
         before = len(self.calls)
         with self.assertRaises(SystemExit):
             self.launch('download', str(self.config), '--jobs', '0')

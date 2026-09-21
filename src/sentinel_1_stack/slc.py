@@ -216,7 +216,7 @@ def is_dns_error(error: BaseException) -> bool:
     return False
 
 
-def request_product(session, product, *, allow_redirects=True, stop=None):
+def request_product(session, product, *, allow_redirects=True, stop=None, headers=None):
     """Retry DNS failures before consuming any product bytes, including redirects."""
     from requests.exceptions import RequestException
 
@@ -225,7 +225,7 @@ def request_product(session, product, *, allow_redirects=True, stop=None):
         check_cancelled(stop)
         try:
             return session.get(product.url, stream=True, timeout=(30, 120),
-                               allow_redirects=allow_redirects)
+                               allow_redirects=allow_redirects, **({"headers": headers} if headers else {}))
         except RequestException as exc:
             if not is_dns_error(exc) or attempt == len(delays):
                 raise
@@ -244,8 +244,21 @@ def check_cancelled(stop):
         raise DownloadCancelled("他の取得失敗または中断により停止しました。")
 
 
-def fetch_product(product: Product, output_dir: Path, session, *, replace_invalid=False, stop=None) -> str:
-    from requests.exceptions import RequestException
+class RetryTransfer(DownloadError):
+    """A bounded retry can recover this transfer."""
+
+
+def retry_pause(attempt, stop):
+    delay = min(2 ** min(attempt + 1, 5), 30)
+    if stop is None:
+        time.sleep(delay)
+    elif stop.wait(delay):
+        check_cancelled(stop)
+
+
+def fetch_product(product: Product, output_dir: Path, session, *, replace_invalid=False,
+                  stop=None, retries=3) -> str:
+    from requests.exceptions import RequestException, ConnectionError, Timeout, ChunkedEncodingError, SSLError
 
     check_cancelled(stop)
     destination = output_dir / product.filename
@@ -254,70 +267,109 @@ def fetch_product(product: Product, output_dir: Path, session, *, replace_invali
     if verified_file(destination, product):
         print(f"[{product.filename}] サイズ・MD5 一致: 取得済みのためスキップ", flush=True)
         return "skipped"
-    if destination.exists():
-        if not replace_invalid:
-            raise DownloadError(
-                f"既存 ZIP のサイズまたは MD5 が不一致です: {product.filename}。"
-                "置き換える場合は --replace-invalid を指定してください。"
-            )
-        print(f"[{product.filename}] 既存 ZIP が不一致: 新しいファイルの検証成功後に置き換えます。", flush=True)
+    if destination.exists() and not replace_invalid:
+        raise DownloadError(f"既存 ZIP のサイズまたは MD5 が不一致です: {product.filename}。"
+                            "置き換える場合は --replace-invalid を指定してください。")
     if verified_file(partial, product):
         os.replace(partial, destination)
         print(f"[{product.filename}] 検証済みの一時ファイルを正式名に変更", flush=True)
         return "recovered"
 
-    # An invalid partial will be truncated; an existing final file is preserved
-    # until its replacement has passed verification.
-    reusable = partial.stat().st_size if partial.exists() else 0
-    if reusable:
-        print(f"[{product.filename}] 未完成の .part は先頭から再取得します。", flush=True)
-    if shutil.disk_usage(output_dir).free + reusable < product.size:
-        raise DownloadError(f"保存先の空き容量が不足しています: {product.filename}")
-
-    written = 0
-    checksum = hashlib.md5(usedforsecurity=False)
-    last_report = time.monotonic()
-    try:
-        with request_product(session, product, stop=stop) as response:
-            if response.status_code in {401, 403}:
-                raise DownloadError("Earthdata 認証に失敗しました。~/.netrc の設定とデータへのアクセス権を確認してください。")
-            if response.status_code != 200:
-                raise DownloadError(f"HTTP {response.status_code}: {product.filename} の取得に失敗しました。")
-            with partial.open("wb") as stream:
-                for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
+    # A complete but corrupt (or oversized) partial cannot be resumed. Preserve it
+    # until a fresh response has been validated and is ready to replace its bytes.
+    restart = partial.exists() and partial.stat().st_size >= product.size
+    for attempt in range(retries + 1):
+        check_cancelled(stop)
+        existing = partial.stat().st_size if partial.exists() else 0
+        if existing >= product.size:
+            if not restart and verified_file(partial, product):
+                os.replace(partial, destination)
+                print(f"[{product.filename}] 完全受信済みの .part を検証して確定しました。", flush=True)
+                return "downloaded"
+            restart = True
+        offset = 0 if restart else existing
+        checksum = hashlib.md5(usedforsecurity=False)
+        if offset:
+            with partial.open('rb') as stream:
+                for chunk in iter(lambda: stream.read(CHUNK_SIZE), b''):
                     check_cancelled(stop)
-                    if not chunk:
-                        continue
-                    written += len(chunk)
-                    if written > product.size:
-                        raise DownloadError(f"受信データが予定サイズを超えました: {product.filename}")
-                    stream.write(chunk)
                     checksum.update(chunk)
-                    now = time.monotonic()
-                    if now - last_report >= 5:
-                        print(f"[{product.filename}] {written / product.size:.1%} ({written:,} / {product.size:,} bytes)", flush=True)
-                        last_report = now
-                stream.flush()
-                os.fsync(stream.fileno())
-    except RequestException as exc:
-        if is_dns_error(exc):
-            raise DownloadError(
-                f"名前解決（DNS）に失敗しました: {product.filename}。"
-                "ASF / Earthdata に接続するネットワークの DNS 設定を確認してください。"
-            ) from exc
-        raise DownloadError(f"通信に失敗しました ({type(exc).__name__}): {product.filename}。再実行できます。") from exc
+            print(f"[{product.filename}] {offset:,} bytes からの再開を要求します。", flush=True)
+        if shutil.disk_usage(output_dir).free + existing < product.size:
+            raise DownloadError(f"保存先の空き容量が不足しています: {product.filename}")
+        headers = {'Range': f'bytes={offset}-', 'Accept-Encoding': 'identity'} if offset else {'Accept-Encoding': 'identity'}
+        try:
+            with request_product(session, product, stop=stop, headers=headers) as response:
+                status = response.status_code
+                if status in {401, 403}:
+                    raise DownloadError("Earthdata 認証に失敗しました。~/.netrc の設定とデータへのアクセス権を確認してください。")
+                if status in {429, 500, 502, 503, 504}:
+                    raise RetryTransfer(f"HTTP {status}: {product.filename}")
+                if status == 416 and offset:
+                    restart = True
+                    raise RetryTransfer(f"再開位置が拒否されました。先頭から再取得します: {product.filename}")
+                if status not in {200, 206}:
+                    raise DownloadError(f"HTTP {status}: {product.filename} の取得に失敗しました。")
+                response_headers = getattr(response, 'headers', {})
+                if response_headers.get('Content-Encoding', 'identity').lower() not in {'identity', ''}:
+                    raise DownloadError(f"圧縮されたHTTP応答には追記しません: {product.filename}")
+                if status == 206:
+                    match = re.fullmatch(r'bytes (\d+)-(\d+)/(\d+)', response_headers.get('Content-Range', ''))
+                    if not offset or not match or tuple(map(int, match.groups())) != (offset, product.size - 1, product.size):
+                        raise DownloadError(f"Content-Range が要求した位置・サイズと一致しません。追記せず停止します: {product.filename}")
+                else:
+                    if offset:
+                        print(f"[{product.filename}] サーバーが再開に応じないため、先頭から取得します。", flush=True)
+                    offset = 0
+                    checksum = hashlib.md5(usedforsecurity=False)
+                length = response_headers.get('Content-Length')
+                if length is not None and (not length.isdigit() or int(length) != product.size - offset):
+                    raise DownloadError(f"Content-Length が予定サイズと一致しません: {product.filename}")
+                written = offset
+                restart = False
+                last_report = time.monotonic()
+                with partial.open('ab' if offset else 'wb') as stream:
+                    for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
+                        check_cancelled(stop)
+                        if not chunk:
+                            continue
+                        if written + len(chunk) > product.size:
+                            raise DownloadError(f"受信データが予定サイズを超えました: {product.filename}")
+                        stream.write(chunk)
+                        checksum.update(chunk)
+                        written += len(chunk)
+                        now = time.monotonic()
+                        if now - last_report >= 5:
+                            print(f"[{product.filename}] {written / product.size:.1%} ({written:,} / {product.size:,} bytes)", flush=True)
+                            last_report = now
+                    stream.flush()
+                    os.fsync(stream.fileno())
+            check_cancelled(stop)
+            if written != product.size:
+                raise RetryTransfer(f"サイズ不一致: {product.filename}（予定 {product.size:,} / 取得 {written:,} bytes）")
+            if checksum.hexdigest() != product.md5:
+                restart = True
+                raise RetryTransfer(f"MD5 不一致: {product.filename}。先頭から再取得します。")
+            os.replace(partial, destination)
+            print(f"[{product.filename}] 100% — サイズ・MD5 検証成功", flush=True)
+            return "downloaded"
+        except (RetryTransfer, RequestException) as exc:
+            # Never log exception strings or redirect URLs from requests.
+            if isinstance(exc, RequestException):
+                if is_dns_error(exc):
+                    raise DownloadError(f"名前解決（DNS）に失敗しました: {product.filename}。ASF / Earthdata に接続するネットワークの DNS 設定を確認してください。") from exc
+                message = f"通信に失敗しました ({type(exc).__name__}): {product.filename}"
+                if isinstance(exc, SSLError) or not isinstance(exc, (ConnectionError, Timeout, ChunkedEncodingError)):
+                    raise DownloadError(message) from exc
+            else:
+                message = str(exc)
+            if attempt == retries:
+                raise DownloadError(message + "。自動再試行の上限に達しました。.part を残して停止します。") from exc
+            print(f"[{product.filename}] 自動再試行 {attempt + 1}/{retries}: {message}", flush=True)
+            retry_pause(attempt, stop)
 
-    check_cancelled(stop)
-    if written != product.size:
-        raise DownloadError(f"サイズ不一致: {product.filename}（予定 {product.size:,} / 取得 {written:,} bytes）")
-    if checksum.hexdigest() != product.md5:
-        raise DownloadError(f"MD5 不一致: {product.filename}")
-    os.replace(partial, destination)
-    print(f"[{product.filename}] 100% — サイズ・MD5 検証成功", flush=True)
-    return "downloaded"
 
-
-def fetch_parallel(products, output_dir, jobs, replace_invalid, manifest, manifest_path):
+def fetch_parallel(products, output_dir, jobs, replace_invalid, manifest, manifest_path, retries=3):
     """Each worker owns its session; only the coordinator updates the manifest."""
     stop = threading.Event()
     counts = {"downloaded": 0, "skipped": 0, "recovered": 0}
@@ -331,7 +383,7 @@ def fetch_parallel(products, output_dir, jobs, replace_invalid, manifest, manife
         try:
             with create_session() as session:
                 return fetch_product(product, output_dir, session,
-                                     replace_invalid=replace_invalid, stop=stop)
+                                     replace_invalid=replace_invalid, stop=stop, retries=retries)
         except BaseException:
             stop.set()
             raise
@@ -418,6 +470,7 @@ def input_lock(path: Path):
 
 
 def add_arguments(parser):
+    parser.add_argument("--retries", type=int, default=3, help="途中切断等の追加再試行回数（既定3、0で無効）")
     parser.add_argument("--jobs", type=int, default=1, help="同時に取得するファイル数（既定1、まず2を推奨）")
     parser.add_argument("config", type=Path, help="work_dir を指定した設定 YAML")
     parser.add_argument("json", type=Path, help="ASF GeoJSON ファイルを1個指定")
@@ -447,6 +500,9 @@ def run(args) -> int:
     manifest = None
     manifest_path = None
     try:
+        retries = getattr(args, "retries", 3)
+        if type(retries) is not int or retries < 0:
+            raise InputError("--retries は0以上の整数で指定してください。")
         jobs = getattr(args, "jobs", 1)
         if type(jobs) is not int or jobs < 1:
             raise InputError("--jobs は1以上の整数で指定してください。")
@@ -484,7 +540,7 @@ def run(args) -> int:
         contexts.enter_context(redirect_stderr(Tee(sys.stderr, log, log_lock)))
         manifest_path = log_dir / f"slc_{run_id}.json"
         manifest = {
-            "schema_version": 1, "status": "running", "jobs": jobs, "input": str(batch.path),
+            "schema_version": 1, "status": "running", "jobs": jobs, "retries": retries, "input": str(batch.path),
             "input_sha256": hashlib.sha256(batch.content).hexdigest(),
             "output": str(output_dir), "work_dir": str(work_dir),
             "started_at": datetime.now(timezone.utc).isoformat(),
@@ -508,7 +564,7 @@ def run(args) -> int:
                 manifest["products"][i]["status"] = "checking_or_downloading"
                 write_manifest(manifest_path, manifest)
                 try:
-                    result = fetch_product(product, output_dir, session, replace_invalid=args.replace_invalid)
+                    result = fetch_product(product, output_dir, session, replace_invalid=args.replace_invalid, retries=retries)
                 except (DownloadError, OSError, KeyboardInterrupt) as exc:
                     manifest["products"][i]["status"] = "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed"
                     raise
@@ -516,7 +572,7 @@ def run(args) -> int:
                 manifest["products"][i]["status"] = result
                 write_manifest(manifest_path, manifest)
         else:
-            counts = fetch_parallel(batch.products, output_dir, jobs, args.replace_invalid, manifest, manifest_path)
+            counts = fetch_parallel(batch.products, output_dir, jobs, args.replace_invalid, manifest, manifest_path, retries=retries)
         ensure_input_unchanged(batch)
         manifest["status"] = "complete"
         manifest["finished_at"] = datetime.now(timezone.utc).isoformat()

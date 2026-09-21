@@ -50,7 +50,7 @@ execution:
   num_processes_topo: 1   # topo内部の並列数
 
 # コマンド固有の取得オプション（YAMLの処理設定ではなくCLIで指定）:
-# download: JSON（省略時はYAMLの隣から1件選択）, --json, --jobs, --out, --log-dir, --dry-run, --replace-invalid
+# download: JSON（省略時はYAMLの隣から1件選択）, --json, --jobs, --retries, --out, --log-dir, --dry-run, --replace-invalid
 # orbit: --out, --log-dir, --dry-run, --allow-restituted
 # dem: --out, --log-dir, --margin, --fill-missing-zero, --dry-run
 # prepare: --dry-run / run: --dry-run, --resume, --unwrap-jobs（既定1）

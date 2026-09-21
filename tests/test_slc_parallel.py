@@ -30,7 +30,7 @@ class ParallelTests(unittest.TestCase):
 
     def run_app(self, *options):
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-            result = app.main([str(self.config),str(self.input),'--jobs','2',*options])
+            result = app.main([str(self.config),str(self.input),'--jobs','2','--retries','0',*options])
         return result
 
     def record(self):

@@ -19,7 +19,8 @@ from requests.exceptions import ConnectionError
 
 
 class FakeResponse:
-    def __init__(self, chunks=(), status=200):
+    def __init__(self, chunks=(), status=200, headers=None):
+        self.headers = headers or {}
         self.chunks = chunks
         self.status_code = status
 
@@ -95,11 +96,23 @@ class DownloadTests(unittest.TestCase):
     def run_app(self, *args):
         stdout, stderr = io.StringIO(), io.StringIO()
         with redirect_stdout(stdout), redirect_stderr(stderr):
-            status = app.main([str(self.config), str(self.input), "--out", str(self.output), "--log-dir", str(self.logs), *args])
+            status = app.main([str(self.config), str(self.input), "--out", str(self.output), "--log-dir", str(self.logs), "--retries", "0", *args])
         self.stdout, self.stderr = stdout.getvalue(), stderr.getvalue()
         return status
 
 
+
+    def test_retries_option_resumes_and_is_recorded(self):
+        from requests.exceptions import ChunkedEncodingError
+        self.write_input(feature())
+        self.session = FakeSession([FakeResponse([b'da', ChunkedEncodingError('cut')]),
+                                    FakeResponse([b'ta'], 206, {'Content-Range': 'bytes 2-3/4'})])
+        with patch.object(app, 'retry_pause'):
+            self.assertEqual(self.run_app('--retries', '3'), 0)
+        record = json.loads(next(self.logs.glob('*.json')).read_text())
+        self.assertEqual(record['retries'], 3)
+        self.assertEqual(record['status'], 'complete')
+        self.assertEqual(self.session.calls[1][1]['headers']['Range'], 'bytes=2-')
 
     def test_dry_run_is_read_only(self):
         original = self.write_input(feature(), feature("S1A_IW_SLC__1SDV_20171208T215256_20171208T215325_019529_021262_A26F.zip", b"12345"))

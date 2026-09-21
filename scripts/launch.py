@@ -63,6 +63,7 @@ def main(argv=None):
     download.add_argument("-out", "--out", type=Path)
     download.add_argument("--log-dir", type=Path)
     download.add_argument("--dry-run", action="store_true")
+    download.add_argument("--retries", type=int, default=None, help="途中切断等の追加再試行回数（対応イメージでは既定3）")
     download.add_argument("--jobs", type=int, default=1, help="同時取得数（既定1）")
     download.add_argument("--replace-invalid", action="store_true")
     orbit = commands.add_parser("orbit", help="取得済み SLC に対応する ASF 軌道を取得")
@@ -96,6 +97,8 @@ def main(argv=None):
         parser.error("--unwrap-jobs は1以上の整数で指定してください。")
     if args.command in ("download", "download-slc") and args.jobs < 1:
         parser.error("--jobs は1以上の整数で指定してください。")
+    if args.command in ("download", "download-slc") and args.retries is not None and args.retries < 0:
+        parser.error("--retries は0以上で指定してください。")
     try:
         config = file_path(args.config)
         request = None
@@ -165,6 +168,8 @@ def main(argv=None):
         if "RES_OPTIONS" in os.environ:
             command += ["--env", "RES_OPTIONS"]
         options = []
+        if is_download and args.retries is not None:
+            options += ["--retries", str(args.retries)]
         if is_download and args.jobs != 1:
             options += ["--jobs", str(args.jobs)]
         output_default = root / "input/dem" if is_dem else root / settings["paths"]["orbit" if is_orbit else "slc"]
