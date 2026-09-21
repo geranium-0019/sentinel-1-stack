@@ -1,0 +1,2 @@
+FROM sentinel-1-stack:rc1-debug
+RUN apt-get update && apt-get install -y --no-install-recommends valgrind && rm -rf /var/lib/apt/lists/*
