@@ -70,23 +70,37 @@ cd sentinel-1-stack-0.1.0-rc2
 docker image inspect sentinel-1-stack:0.1.0-rc2 --format '{{.Id}}'
 docker run --rm sentinel-1-stack:0.1.0-rc2 python --version
 ls scripts/run.sh config/example.yaml
+
+TOOL_DIR="$(pwd -P)"
+IMAGE="sentinel-1-stack:0.1.0-rc2"
 ```
 
 イメージID・Pythonのバージョン・2つのファイルが表示されれば導入完了です。
 イメージを読み込んでも、ホスト側に操作用ファイルは作られないため、ソースの展開も必要です。
 
-## 3. 自分のデータで処理する
+## 3. 操作用ファイルを最新版にする（rc2向け）
 
-展開先の `docs/操作マニュアル.md` を開き、作業ディレクトリを決めるところから進めます。
-使用イメージは以下を指定します。
+公開済みrc2の圧縮ファイルには、JSONの自動選択と今回のマニュアル修正が含まれていません。
+rc2イメージはそのまま使い、操作用ファイルだけ更新します。Gitが利用できる環境で実行してください。
+更新先 `sentinel-1-stack-tools` は新しく作るディレクトリです。既に存在する場合は別名に変更してください。
 
 ```bash
-IMAGE="sentinel-1-stack:0.1.0-rc2"
+git clone https://github.com/geranium-0019/sentinel-1-stack.git "$INSTALL_DIR/sentinel-1-stack-tools"
+TOOL_DIR="$INSTALL_DIR/sentinel-1-stack-tools"
 ```
+
+これはrc2に同梱されていない変更を使うための手順です。今回更新済みの操作用ファイルを使っている場合は不要です。
+Dockerイメージの再ビルドは不要です。
+
+## 4. 自分のデータで処理する
+
+`TOOL_DIR` は展開先、`IMAGE` は読み込んだイメージ名です。ここまでで両方設定できています。
+同じターミナルで、`$TOOL_DIR/docs/操作マニュアル.md` の手順1へ進みます。
+新しいターミナルで再開する方法は操作マニュアルの末尾にあります。
 
 ASFの検索結果JSONとEarthdata認証は、ご自身で用意してください。
 作業ディレクトリには外部ディスクの `/mnt/…` も指定できます。
-イメージと操作用ファイルは同じバージョンのものを使ってください。
+通常は同じバージョンの組み合わせを使います。上記の更新版起動スクリプトはrc2イメージでも動作確認しています。
 
 ## 検証範囲
 

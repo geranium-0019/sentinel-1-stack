@@ -1,4 +1,4 @@
-work_dir: /mnt/ssd/sar-work/sentinel-1/agung
+work_dir: ..
 
 schema_version: 1
 

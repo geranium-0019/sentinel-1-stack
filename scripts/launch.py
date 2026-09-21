@@ -58,7 +58,8 @@ def main(argv=None):
     init.add_argument("config", type=Path)
     download = commands.add_parser("download", aliases=["download-slc"], help="指定 JSON の SLC を取得")
     download.add_argument("config", type=Path)
-    download.add_argument("json", type=Path)
+    download.add_argument("json", type=Path, nargs="?", help="ASF JSON（省略時は設定YAMLと同じ場所から1件選択）")
+    download.add_argument("--json", dest="json_file", type=Path, help="ASF JSONを明示指定")
     download.add_argument("-out", "--out", type=Path)
     download.add_argument("--log-dir", type=Path)
     download.add_argument("--dry-run", action="store_true")
@@ -94,6 +95,26 @@ def main(argv=None):
         parser.error("--unwrap-jobs は1以上の整数で指定してください。")
     try:
         config = file_path(args.config)
+        request = None
+        if args.command in ("download", "download-slc"):
+            if args.json is not None and args.json_file is not None:
+                raise WorkspaceError("JSONの位置引数と --json は同時に指定できません。")
+            selected = args.json_file or args.json
+            if selected is None:
+                candidates = sorted(p for p in config.parent.iterdir()
+                                    if p.suffix.lower() in {".json", ".geojson"}
+                                    and (p.is_file() or p.is_symlink()))
+                if len(candidates) != 1:
+                    names = "、".join(p.name for p in candidates) or "なし"
+                    raise WorkspaceError(
+                        f"設定YAMLと同じディレクトリのJSONは1件必要です（{len(candidates)}件）: {config.parent}\n"
+                        f"候補: {names}\n"
+                        "JSONを1件置くか、対象を --json で指定してください。実行例:\n"
+                        "  scripts/run.sh --image IMAGE download config/project.yaml --json /path/to/results.geojson\n"
+                        "IMAGEと各パスは使用中のものに置き換えてください。")
+                selected = candidates[0]
+            request = file_path(selected)
+            print(f"入力JSON: {request}", flush=True)
         base = docker_base()
         config_mount = bind(config, "/run/project.yaml", readonly=True)
         inspected = subprocess.run(
@@ -134,7 +155,6 @@ def main(argv=None):
         is_download = not (is_orbit or is_dem)
         command = base + config_mount + bind(root, "/work")
         if is_download:
-            request = file_path(args.json)
             command += bind(request, "/run/scenes.geojson", readonly=True)
         command += ["--workdir", "/work", "--env", "SENTINEL_STACK_RUNTIME_WORK_DIR=/work",
                     "--env", "MPLCONFIGDIR=/tmp/matplotlib", "--env", "OPENBLAS_NUM_THREADS=1",

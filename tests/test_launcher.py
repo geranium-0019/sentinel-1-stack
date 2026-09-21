@@ -86,6 +86,39 @@ class LauncherTests(unittest.TestCase):
         self.assertNotIn("NETRC=/run/secrets/earthdata.netrc", command)
         self.assertEqual(set(self.root.rglob("*")), before)
 
+    def test_auto_json_uses_config_directory_without_writes(self):
+        self.initialize()
+        before = set(self.root.rglob("*"))
+        self.assertEqual(self.launch("download", str(self.config), "--dry-run"), 0)
+        self.assertIn(f"type=bind,source={self.request},target=/run/scenes.geojson,readonly", self.calls[-1])
+        self.assertEqual(before, set(self.root.rglob("*")))
+
+    def test_auto_json_missing_or_ambiguous_stops_before_docker(self):
+        self.request.unlink()
+        for names in ([], ["one.json", "two.GEOJSON"]):
+            for name in names:
+                (self.root / name).write_text("{}")
+            error = io.StringIO()
+            with patch.object(launcher.subprocess, "run") as docker, redirect_stdout(io.StringIO()), redirect_stderr(error):
+                self.assertEqual(launcher.main(["download", str(self.config), "--dry-run"]), 2)
+            docker.assert_not_called()
+            self.assertIn("--json", error.getvalue())
+            self.assertFalse(self.work.exists())
+
+    def test_explicit_json_overrides_multiple_candidates(self):
+        self.initialize()
+        (self.root / "other.json").write_text("{}")
+        self.assertEqual(self.launch("download", str(self.config), "--json", str(self.request), "--dry-run"), 0)
+        self.assertIn(f"type=bind,source={self.request},target=/run/scenes.geojson,readonly", self.calls[-1])
+
+    def test_conflicting_json_arguments_and_symlinks_rejected(self):
+        self.assertEqual(self.launch("download", str(self.config), str(self.request), "--json", str(self.request)), 2)
+        target = self.root / "target.txt"
+        self.request.rename(target)
+        self.request.symlink_to(target)
+        self.assertEqual(self.launch("download", str(self.config), "--dry-run"), 2)
+        self.assertEqual(self.calls, [])
+
     def test_uninitialized_download_does_not_mount_or_create_root(self):
         self.assertEqual(self.launch("download", str(self.config), str(self.request), "--dry-run"), 2)
         self.assertFalse(self.work.exists())

@@ -80,6 +80,12 @@ Compose直接起動で `not a shared mount` が出る環境の手順は、既存
 
 ## SLC のダウンロード
 
+最新版のホスト起動スクリプトでは `scripts/run.sh download CONFIG` とJSONを省略できます。
+設定YAMLと同じ場所の `.json`／`.geojson` が1件なら自動選択し、0件・複数件では停止します。
+明示指定は `scripts/run.sh download CONFIG --json JSON`。従来の位置引数 `download CONFIG JSON` も使えます。
+この自動選択はホスト側の機能で、コンテナ内のCLIを直接使う場合はJSONの位置引数を指定します。
+
+
 ASF Vertex から保存した GeoJSON `FeatureCollection` を指定します。
 拡張子は `.json` / `.geojson`、各製品に `url`, `fileName`, `bytes`, `md5sum` が必要です。
 現在の対象は Sentinel-1 **IW SLC の ZIP**です（GRD やバースト製品は対象外）。
