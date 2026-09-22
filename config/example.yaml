@@ -8,7 +8,7 @@ paths:
   slc: input/slc
   orbit: input/orbit
   aux: input/aux
-  dem: null                 # dem 成功時に相対パスを自動設定（配布済みrc4では手動）
+  dem: null                 # dem 成功時に相対パスを自動設定（rc4更新版から対応）
   processing: processing
   output: output
   logs: logs

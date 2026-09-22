@@ -74,9 +74,20 @@ jobs:
           set -euo pipefail
           args=()
           if [[ "$VERSION" == *-rc* ]]; then args+=(--prerelease); fi
-          gh release create "$GITHUB_REF_NAME" dist/release/* --verify-tag \
-            --title "sentinel-1-stack $VERSION" "${args[@]}" \
-            --notes-file docs/distribution.md
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            # Explicitly authorized rc4 refresh; other published versions stay immutable.
+            test "$VERSION" = "0.1.0-rc4"
+            # Hide the release while replacing the complete, already verified asset set.
+            gh release edit "$GITHUB_REF_NAME" --draft=true
+            gh release upload "$GITHUB_REF_NAME" dist/release/* --clobber
+            gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease \
+              --title "sentinel-1-stack $VERSION (2026-09-22 update)" \
+              --notes-file docs/distribution.md
+          else
+            gh release create "$GITHUB_REF_NAME" dist/release/* --verify-tag \
+              --title "sentinel-1-stack $VERSION" "${args[@]}" \
+              --notes-file docs/distribution.md
+          fi
       - name: Save build and validation logs
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
