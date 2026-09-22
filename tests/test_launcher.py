@@ -86,6 +86,16 @@ class LauncherTests(unittest.TestCase):
         self.assertNotIn("NETRC=/run/secrets/earthdata.netrc", command)
         self.assertEqual(set(self.root.rglob("*")), before)
 
+    def test_dem_update_mount_only_for_real_enabled_run(self):
+        self.initialize()
+        self.assertEqual(self.launch('dem', str(self.config)), 0)
+        self.assertIn(f'type=bind,source={self.config.parent},target=/run/config-update', self.calls[-1])
+        self.assertEqual(self.launch('dem', str(self.config), '--dry-run'), 0)
+        self.assertFalse(any('/run/config-update' in item for item in self.calls[-1]))
+        self.assertEqual(self.launch('dem', str(self.config), '--no-update-config'), 0)
+        self.assertIn('SENTINEL_STACK_DEM_NO_UPDATE=1', self.calls[-1])
+        self.assertFalse(any('/run/config-update' in item for item in self.calls[-1]))
+
     def test_download_jobs_forwarded_and_invalid_value_rejected(self):
         self.initialize()
         self.assertEqual(self.launch('download', str(self.config), '--jobs', '2', '--retries', '5', '--dry-run'), 0)

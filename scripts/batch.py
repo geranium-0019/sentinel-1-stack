@@ -99,7 +99,7 @@ def acquire(args, info, root, log, run_id):
     if not document.get('paths', {}).get('dem'):
         # A dedicated directory identifies this exact DEM invocation, including reuse.
         dem_logs = root / info['settings']['paths']['logs'] / run_id / 'dem'
-        command = base + ['dem', original, '--log-dir', str(dem_logs)]
+        command = base + ['dem', original, '--no-update-config', '--log-dir', str(dem_logs)]
         if args.fill_missing_zero:
             command.append('--fill-missing-zero')
         execute(command, log)

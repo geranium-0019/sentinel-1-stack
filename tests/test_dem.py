@@ -7,6 +7,7 @@ from pathlib import Path
 import struct
 import tempfile
 import unittest
+import yaml
 from unittest.mock import patch
 import zipfile
 
@@ -208,7 +209,8 @@ class DemTests(unittest.TestCase):
             record = json.loads((final / "dem.json").read_text())
             self.assertEqual(record["vertical_reference"], "WGS84")
             self.assertIn(str(final / "dem.wgs84"), (final / "dem.wgs84.xml").read_text())
-            self.assertEqual(self.config.read_bytes(), config_before)
+            self.assertEqual(yaml.safe_load(self.config.read_text())["paths"]["dem"], "input/dem/srtm1_S07E105_S06E106/dem.wgs84")
+            self.assertEqual(next(self.base.glob("project.yaml.*.bak")).read_bytes(), config_before)
             before = {p.name: p.stat().st_mtime_ns for p in final.iterdir()}
             self.session = Session()
             self.assertEqual(self.run_app(), 0)
@@ -218,12 +220,22 @@ class DemTests(unittest.TestCase):
             self.assertEqual(self.run_app(), 1)
             self.assertEqual((final / "dem.wgs84").read_bytes(), b"tampered")
 
+    def test_disable_config_update(self):
+        self.session = Session(Response(b"S07E105.SRTMGL1.hgt.zip"), Response(zip_bytes()))
+        before = self.config.read_bytes()
+        with patch.object(dem, "run_dem_py", side_effect=self.fake_stitch), patch.object(dem, "validate_dem"):
+            self.assertEqual(self.run_app('--no-update-config'), 0, self.stderr)
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assertFalse(list(self.base.glob('*.bak')))
+
     def test_dem_process_failure_does_not_publish_bundle(self):
         self.session = Session(Response(b"S07E105.SRTMGL1.hgt.zip"), Response(zip_bytes()))
+        before = self.config.read_bytes()
         with patch.object(dem, "run_dem_py", side_effect=dem.DownloadError("failed subprocess")):
             self.assertEqual(self.run_app(), 1)
         self.assertFalse((self.output / "srtm1_S07E105_S06E106").exists())
         self.assertFalse(list(self.output.glob(".dem-build-*")))
+        self.assertEqual(self.config.read_bytes(), before)
         record = json.loads(next((self.work / "logs/dem").glob("*.json")).read_text())
         self.assertEqual(record["status"], "failed")
 

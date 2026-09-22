@@ -324,6 +324,7 @@ def existing_bundle(final, plan, fill_zero):
 
 
 def add_arguments(parser):
+    parser.add_argument("--no-update-config", action="store_true", help="DEM取得後に設定YAMLを更新しない")
     parser.add_argument("config", type=Path, help="work_dir を指定した設定 YAML")
     parser.add_argument("--out", "-out", type=Path, help="DEM 保存ディレクトリ（既定: input/dem）")
     parser.add_argument("--log-dir", type=Path, help="ログ保存ディレクトリ")
@@ -336,6 +337,7 @@ def run(args):
     contexts = ExitStack()
     record = record_path = None
     try:
+        original_config = args.config.read_bytes()
         settings, root = config.load(args.config)
         root = require_initialized(root, settings["directories"])
         plan = make_plan(root / settings["paths"]["slc"], args.margin)
@@ -409,9 +411,18 @@ def run(args):
                       finished_at=datetime.now(timezone.utc).isoformat())
         write_manifest(record_path, record)
         dem_path = final / "dem.wgs84"
-        print(f"DEM: {dem_path}\n設定ファイルは変更していません。")
+        print(f"DEM: {dem_path}")
         if dem_path.is_relative_to(root):
-            print("処理で使う paths.dem の指定例:\n  dem: " + str(dem_path.relative_to(root)))
+            relative = str(dem_path.relative_to(root))
+            if getattr(args, "no_update_config", False) or os.environ.get("SENTINEL_STACK_DEM_NO_UPDATE") == "1":
+                print("設定は未更新（自動更新無効）。paths.dem: " + relative)
+            else:
+                from .config_update import update_dem
+                try:
+                    update_dem(Path(os.environ.get("SENTINEL_STACK_CONFIG_UPDATE", str(args.config))), original_config, relative)
+                except (WorkspaceError, OSError, ValueError) as exc:
+                    print(f"ERROR: DEMは完成していますが設定更新に失敗しました: {exc}\npaths.dem を {relative} に設定してください。", file=sys.stderr)
+                    return 2
         else:
             print("paths.dem は work_dir 内の相対パスです。処理に使う際は DEM 一式を work_dir 配下へ配置してください。")
         return 0

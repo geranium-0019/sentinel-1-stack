@@ -74,6 +74,7 @@ def main(argv=None):
     orbit.add_argument("--allow-restituted", action="store_true", help="精密軌道がない場合に速報軌道を許可")
     dem = commands.add_parser("dem", help="SLC の画像範囲から DEM を取得・作成")
     dem.add_argument("config", type=Path)
+    dem.add_argument("--no-update-config", action="store_true", help="DEM取得後に設定YAMLを更新しない")
     dem.add_argument("-out", "--out", type=Path)
     dem.add_argument("--log-dir", type=Path)
     dem.add_argument("--margin", type=float, default=0.1, help="画像範囲の余白（度、既定: 0.1）")
@@ -196,6 +197,11 @@ def main(argv=None):
         if is_orbit and args.allow_restituted:
             options.append("--allow-restituted")
         if is_dem:
+            if args.no_update_config:
+                command += ["--env", "SENTINEL_STACK_DEM_NO_UPDATE=1"]
+            elif not args.dry_run:
+                command += bind(config.parent, "/run/config-update")
+                command += ["--env", f"SENTINEL_STACK_CONFIG_UPDATE=/run/config-update/{config.name}"]
             options += ["--margin", str(args.margin)]
             if args.fill_missing_zero:
                 options.append("--fill-missing-zero")
