@@ -143,6 +143,9 @@ def main(argv=None):
         require_initialized(root, settings["directories"])
         if args.command in ("prepare", "run", "export"):
             command = base + config_mount + bind(root, "/work", readonly=args.dry_run)
+            if args.command == "prepare" and not args.dry_run:
+                command += bind(config.parent, "/run/config-update")
+                command += ["--env", f"SENTINEL_STACK_CONFIG_UPDATE=/run/config-update/{config.name}"]
             command += ["--network", "none", "--workdir", "/work",
                         "--env", "SENTINEL_STACK_RUNTIME_WORK_DIR=/work",
                         "--env", "OPENBLAS_NUM_THREADS=1", "--env", "OMP_NUM_THREADS=2",

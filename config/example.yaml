@@ -22,7 +22,7 @@ processing:
   # 入力データを確認してから設定する
   swaths: null            # bboxと全SLCの位置情報から自動選択。手動指定は [3] など
   bbox: null                # [南端, 北端, 西端, 東端]
-  reference_date: null      # "YYYYMMDD"
+  reference_date: null      # 期間中央に近い観測日を自動選択・保存。手動指定は "YYYYMMDD"
 
   coregistration: NESD     # NESD または geometry。自動切替はしない
 

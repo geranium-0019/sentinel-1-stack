@@ -4,6 +4,7 @@ from datetime import datetime
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
 import shlex
@@ -82,9 +83,10 @@ def parameters(document):
             not (-90 <= bbox[0] < bbox[1] <= 90 and -180 <= bbox[2] < bbox[3] <= 180)):
         raise WorkspaceError('processing.bbox は有効な [南, 北, 西, 東] を指定してください。')
     date = p.get('reference_date')
-    if not isinstance(date, str) or not re.fullmatch(r'\d{8}', date):
-        raise WorkspaceError('processing.reference_date は "YYYYMMDD" 形式の文字列にしてください。')
-    datetime.strptime(date, '%Y%m%d')
+    if date is not None and (not isinstance(date, str) or not re.fullmatch(r'\d{8}', date)):
+        raise WorkspaceError('processing.reference_date は null（自動）または "YYYYMMDD" 形式の文字列にしてください。')
+    if date is not None:
+        datetime.strptime(date, '%Y%m%d')
     for mapping, keys in ((p, ('range_looks', 'azimuth_looks')), (e, ('num_processes', 'num_processes_topo')),
                           (pairs, ('connections',))):
         for key in keys:
@@ -93,6 +95,15 @@ def parameters(document):
     if type(p.get('filter_strength')) not in (int, float) or not 0 <= p['filter_strength'] <= 1:
         raise WorkspaceError('filter_strength は 0〜1 にしてください。')
     return p, e, pairs['connections']
+
+
+def select_reference(dates):
+    dates = sorted(set(dates))
+    if len(dates) < 2:
+        raise WorkspaceError('基準日自動選択には2日以上のSLCが必要です。')
+    parsed = {date: datetime.strptime(date, '%Y%m%d') for date in dates}
+    midpoint = parsed[dates[0]] + (parsed[dates[-1]] - parsed[dates[0]]) / 2
+    return min(dates, key=lambda date: (abs(parsed[date] - midpoint), date))
 
 
 def safe_path(path, root):
@@ -117,6 +128,9 @@ def plan(config_path):
             raise WorkspaceError(f'DEM ファイルがありません: {paths["dem"]}{suffix}')
     scenes = orbit.discover(paths['slc'])
     dates = sorted({s.start.strftime('%Y%m%d') for s in scenes})
+    reference_auto = p.get('reference_date') is None
+    if reference_auto:
+        p['reference_date'] = select_reference(dates)
     if len(dates) < 2 or p['reference_date'] not in dates:
         raise WorkspaceError('2日以上の SLC と指定した基準日の SLC が必要です。')
     inputs = []
@@ -153,6 +167,7 @@ def plan(config_path):
                '--num_proc4topo', str(e['num_processes_topo'])] + extra_arguments(p)
     return {'destination': str(destination), 'command': command, 'inputs': inputs, 'orbits': selected,
             'dates': dates, 'pairs': [[a, b] for i, a in enumerate(dates) for b in dates[i+1:i+1+connections]],
+            'reference_selection': {'mode': 'auto' if reference_auto else 'explicit', 'date': p['reference_date']},
             'swath_selection': selection, 'processing': p, 'execution': e, 'config_sha256': hashlib.sha256(config_path.read_bytes()).hexdigest()}
 
 
@@ -188,7 +203,10 @@ def run(args):
     created = False
     record_path = None
     try:
+        config_bytes = args.config.read_bytes()
         record = plan(args.config)
+        if record.get("config_sha256", hashlib.sha256(config_bytes).hexdigest()) != hashlib.sha256(config_bytes).hexdigest():
+            raise WorkspaceError("確認中に設定が変更されました。prepareを再実行してください。")
         settings, root = config.load(args.config)
         check_dem(root / settings['paths']['dem'], record['processing']['bbox'])
         log_directory = safe_path(root / settings['paths']['logs'], root)
@@ -198,6 +216,9 @@ def run(args):
         record['record'] = str(record_path)
         if record.get('swath_selection', {}).get('mode') == 'auto':
             print(f"swath自動選択（bboxと全観測の位置情報）: {record['processing']['swaths']}")
+        if record.get('reference_selection', {}).get('mode') == 'auto':
+            print(f"基準日自動選択: {record['processing']['reference_date']}（期間中央に最も近い観測日。同距離なら古い日）")
+            print('品質を比較して最良の日を選んだものではありません。')
         print('観測日: ' + ', '.join(record['dates']))
         print(f"干渉ペア: {len(record['pairs'])} / swaths: {record['processing']['swaths']}")
         for item in record['orbits']:
@@ -214,11 +235,16 @@ def run(args):
             if path.exists() or path.is_symlink():
                 raise WorkspaceError(f'既存ログ・記録は上書きしません。再生成時は退避してください: {path}')
         reserve_destination(destination)
+        if record.get('reference_selection', {}).get('mode') == 'auto':
+            from .config_update import update_field
+            target = Path(os.environ.get('SENTINEL_STACK_CONFIG_UPDATE', str(args.config)))
+            config_bytes = update_field(target, config_bytes, record['processing']['reference_date'], 'processing', 'reference_date')
+            record['config_sha256'] = hashlib.sha256(config_bytes).hexdigest()
         record['status'] = 'generating'
         with record_path.open('x') as stream:
             created = True
             stream.write(json.dumps(record, indent=2) + '\n')
-        (destination / 'project.yaml').write_bytes(args.config.read_bytes())
+        (destination / 'project.yaml').write_bytes(config_bytes)
         (destination / 'slc_inputs.txt').write_text('\n'.join(record['inputs']) + '\n')
         (destination / 'orbits').mkdir()
         for item in record['orbits']:

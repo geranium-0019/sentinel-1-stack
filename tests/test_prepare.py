@@ -1,4 +1,6 @@
 import copy
+import os
+import yaml
 from pathlib import Path
 import unittest
 import tempfile
@@ -49,6 +51,64 @@ class PrepareTests(unittest.TestCase):
                 content = (logs / 'prepare.json').read_bytes()
                 self.assertEqual(prepare.run(SimpleNamespace(config=config, dry_run=False)), 2)
                 self.assertEqual((logs / 'prepare.json').read_bytes(), content)
+
+    def test_reference_selection_uses_calendar_midpoint_and_earlier_tie(self):
+        self.assertEqual(prepare.select_reference(['20200101', '20200102', '20200109', '20200111']), '20200109')
+        self.assertEqual(prepare.select_reference(['20200101', '20200111']), '20200101')
+        self.assertEqual(prepare.select_reference(['20200101', '20200106', '20200111']), '20200106')
+        with self.assertRaises(WorkspaceError):
+            prepare.select_reference(['20200101'])
+        for omitted in (False, True):
+            doc = copy.deepcopy(self.document)
+            doc['processing']['reference_date'] = None
+            if omitted:
+                del doc['processing']['reference_date']
+            self.assertIsNone(parameters(doc)[0].get('reference_date'))
+
+    def test_auto_reference_update_and_snapshot_with_readonly_original_mount(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / 'host.yaml'
+            original = b'processing:\n  reference_date: null # keep\n'
+            target.write_bytes(original)
+            mounted = root / 'mounted.yaml'
+            mounted.write_bytes(original)  # Bind mount may keep the original inode after rename.
+            destination = root / 'processing'
+            destination.mkdir()
+            logs = root / 'logs'
+            logs.mkdir()
+            record = {'destination': str(destination), 'command': ['unused'], 'inputs': [],
+                      'orbits': [], 'dates': ['20200101', '20200111'], 'pairs': [],
+                      'reference_selection': {'mode': 'auto', 'date': '20200101'},
+                      'processing': {'bbox': [], 'swaths': [3], 'reference_date': '20200101'}}
+            settings = {'paths': {'dem': 'dem', 'logs': 'logs'}}
+            with patch.dict(os.environ, {'SENTINEL_STACK_CONFIG_UPDATE': str(target)}), \
+                    patch.object(prepare, 'plan', side_effect=lambda _: copy.deepcopy(record)), \
+                    patch.object(prepare.config, 'load', return_value=(settings, root)), \
+                    patch.object(prepare, 'check_dem') as check, \
+                    patch.object(prepare.subprocess, 'Popen') as popen, \
+                    redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                self.assertEqual(prepare.run(SimpleNamespace(config=mounted, dry_run=True)), 0)
+                self.assertEqual(target.read_bytes(), original)
+                self.assertFalse(list(root.glob('*.bak')))
+                check.side_effect = WorkspaceError('invalid DEM')
+                self.assertEqual(prepare.run(SimpleNamespace(config=mounted, dry_run=False)), 2)
+                self.assertEqual(target.read_bytes(), original)
+                check.side_effect = None
+                def start(*args, **kwargs):
+                    files = destination / 'run_files'
+                    files.mkdir()
+                    (files / 'run_15_filter_coherence').write_text('true\n')
+                    return popen.return_value
+                popen.side_effect = start
+                process = popen.return_value.__enter__.return_value
+                process.stdout = []
+                process.wait.return_value = 0
+                self.assertEqual(prepare.run(SimpleNamespace(config=mounted, dry_run=False)), 0)
+                self.assertEqual(yaml.safe_load(target.read_bytes())['processing']['reference_date'], '20200101')
+                self.assertEqual((destination / 'project.yaml').read_bytes(), target.read_bytes())
+                self.assertEqual(mounted.read_bytes(), original)
+                self.assertEqual(next(root.glob('*.bak')).read_bytes(), original)
 
     def test_existing_processing_is_never_overwritten(self):
         with tempfile.TemporaryDirectory() as tmp:
