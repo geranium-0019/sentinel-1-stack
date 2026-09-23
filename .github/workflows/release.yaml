@@ -81,7 +81,7 @@ jobs:
             gh release edit "$GITHUB_REF_NAME" --draft=true
             gh release upload "$GITHUB_REF_NAME" dist/release/* --clobber
             gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease \
-              --title "sentinel-1-stack $VERSION (2026-09-22 update)" \
+              --title "sentinel-1-stack $VERSION (2026-09-23 update)" \
               --notes-file docs/distribution.md
           else
             gh release create "$GITHUB_REF_NAME" dist/release/* --verify-tag \

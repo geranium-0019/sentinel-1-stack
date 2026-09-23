@@ -1,5 +1,7 @@
 """Execute generated ISCE2 commands with checked child exits and persistent logs."""
 import fcntl
+import configparser
+import xml.etree.ElementTree as ET
 import hashlib
 import json
 import os
@@ -112,8 +114,9 @@ def failure_guidance(log_path, returncode=None):
     )
 
 
-def execute_group(commands, cwd, logs):
+def execute_group(commands, cwd, logs, on_complete=None):
     processes, streams = [], []
+    recorded = set()
     try:
         for command, path in zip(commands, logs):
             stream = path.open('x')
@@ -124,6 +127,11 @@ def execute_group(commands, cwd, logs):
                                                stderr=subprocess.STDOUT, start_new_session=True))
         while True:
             codes = [p.poll() for p in processes]
+            for i, code in enumerate(codes):
+                if code == 0 and i not in recorded:
+                    if on_complete is not None:
+                        on_complete(i)
+                    recorded.add(i)
             for i, code in enumerate(codes):
                 if code is not None and code != 0:
                     raise WorkspaceError(f'終了コード {code}: {shlex.join(commands[i])}\nログ: {logs[i]}' + failure_guidance(logs[i], code))
@@ -139,7 +147,10 @@ def execute_group(commands, cwd, logs):
 
 def save(path, record):
     temporary = path.with_suffix('.json.tmp')
-    temporary.write_text(json.dumps(record, indent=2, ensure_ascii=False) + '\n')
+    with temporary.open('w') as stream:
+        stream.write(json.dumps(record, indent=2, ensure_ascii=False) + '\n')
+        stream.flush()
+        os.fsync(stream.fileno())
     temporary.replace(path)
 
 
@@ -190,6 +201,30 @@ def execution_plan(config_path):
     return directory, logs, fingerprint.hexdigest(), steps, unwrap
 
 
+def unwrap_checkpoints(item, groups, directory, logs):
+    from .unwrap_resume import legacy_completed
+    commands = [command for group in groups for command in group]
+    if 'command_results' not in item:
+        return legacy_completed(item, commands, directory, logs)
+    result = {}
+    for key, record in item['command_results'].items():
+        index = int(key)
+        if index < 0 or index >= len(commands) or record.get('command') != commands[index]:
+            raise WorkspaceError('アンラップの完了記録とコマンドが一致しません。')
+        if record.get('status') != 'complete' or record.get('cacheable') is False:
+            continue
+        outputs = record.get('outputs', [])
+        try:
+            if any(not Path(f['path']).is_file() or Path(f['path']).is_symlink()
+                   or Path(f['path']).stat().st_size != f['size']
+                   or Path(f['path']).stat().st_mtime_ns != f['mtime_ns'] for f in outputs):
+                continue
+        except OSError:
+            continue
+        result[index] = record
+    return result
+
+
 def run(args):
     try:
         unwrap_jobs = getattr(args, 'unwrap_jobs', 1)
@@ -202,6 +237,15 @@ def run(args):
         for name, groups in steps:
             print(f'  {name}: {sum(map(len, groups))} コマンド')
         if args.dry_run:
+            if args.resume and (logs / 'run.json').exists():
+                prior = json.loads((logs / 'run.json').read_text())
+                if prior['fingerprint'] != fingerprint:
+                    raise WorkspaceError('生成スクリプト・設定が変わっているため再開できません。')
+                for name, groups in steps:
+                    if name.endswith('_unwrap'):
+                        prior_item = prior.get('steps', {}).get(name, {})
+                        done = unwrap_checkpoints(prior_item, groups, directory, logs)
+                        print(f'アンラップ再開予定: 完了 {len(done)} / 残り {sum(map(len, groups))-len(done)} ペア')
             return 0
         with (logs / '.run.lock').open('a') as lock:
             try:
@@ -217,6 +261,16 @@ def run(args):
                     raise WorkspaceError('生成スクリプト・設定が変わっているため再開できません。')
             else:
                 state = {'fingerprint': fingerprint, 'steps': {}}
+            if args.resume and any(name.endswith('_unwrap') and state.get('steps', {}).get(name, {}).get('logs')
+                                   and 'command_results' not in state['steps'][name] for name, _ in steps):
+                backup = logs / ('run.before-pair-resume-' + str(time.time_ns()) + '.json')
+                save(backup, state)
+                print(f'旧実行記録のバックアップ: {backup}')
+            if args.resume and any(name.endswith('_unwrap') and state.get('steps', {}).get(name, {}).get('logs')
+                                   and 'command_results' not in state['steps'][name] for name, _ in steps):
+                backup = logs / ('run.before-pair-resume-' + str(time.time_ns()) + '.json')
+                save(backup, state)
+                print(f'旧実行記録のバックアップ: {backup}')
             route_native_log(directory, logs)
             state['unwrap'] = unwrap
             state['unwrap_jobs'] = unwrap_jobs
@@ -233,20 +287,50 @@ def run(args):
                         if item.get('status') == 'complete':
                             report('完了済み: ' + name)
                             continue
+                        is_unwrap = name.endswith('_unwrap')
+                        completed = unwrap_checkpoints(item, groups, directory, logs) if is_unwrap else {}
+                        indexed = []
+                        offset = 0
+                        for group in groups:
+                            indexed.append([(offset+i, command) for i, command in enumerate(group)])
+                            offset += len(group)
+                        if item.get('logs'):
+                            item.setdefault('log_history', []).append(list(item['logs']))
                         item.update(status='running', attempts=item['attempts'] + 1, logs=[])
-                        if name.endswith('_unwrap'):
+                        if is_unwrap:
                             item['unwrap_jobs'] = unwrap_jobs
-                            groups = [group[i:i+unwrap_jobs] for group in groups
-                                      for i in range(0, len(group), unwrap_jobs)]
+                            item['command_results'] = {str(k): v for k, v in completed.items()}
+                            indexed = [[entry for entry in group if entry[0] not in completed] for group in indexed]
+                            indexed = [group[i:i+unwrap_jobs] for group in indexed for i in range(0, len(group), unwrap_jobs)]
+                            report(f'アンラップ: 完了済み {len(completed)} ペアを再利用 / 残り {offset-len(completed)} ペア')
                         save(path, state)
                         report('開始: ' + name)
-                        counter = 0
-                        for group in groups:
-                            names = [logs / f'{name}_attempt{item["attempts"]:03d}_{counter+i+1:03d}.log' for i in range(len(group))]
+                        for group in indexed:
+                            if not group:
+                                continue
+                            commands = [command for _, command in group]
+                            names = [logs / f'{name}_attempt{item["attempts"]:03d}_{index+1:03d}.log' for index, _ in group]
                             item['logs'].extend(map(str, names))
                             save(path, state)
-                            execute_group(group, directory, names)
-                            counter += len(group)
+                            if is_unwrap:
+                                def checkpoint(position):
+                                    index, command = group[position]
+                                    result = {'status': 'complete', 'command': command, 'log': str(names[position]),
+                                              'evidence': 'exit_zero'}
+                                    try:
+                                        from .unwrap_resume import products
+                                        result['outputs'] = products(command, directory)
+                                    except (OSError, ValueError, AttributeError, configparser.Error, ET.ParseError):
+                                        # Unsupported/invalid native outputs are rerun on interruption.
+                                        result['cacheable'] = Path(command[0]).name != 'SentinelWrapper.py'
+                                    item['command_results'][str(index)] = result
+                                    save(path, state)
+                                execute_group(commands, directory, names, on_complete=checkpoint)
+                                for position in range(len(group)):
+                                    if str(group[position][0]) not in item['command_results']:
+                                        checkpoint(position)
+                            else:
+                                execute_group(commands, directory, names)
                         item['status'] = 'complete'
                         save(path, state)
                         report('完了: ' + name)
